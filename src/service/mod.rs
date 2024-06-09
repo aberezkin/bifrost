@@ -1,6 +1,12 @@
-use tokio::net::{TcpStream, UdpSocket};
-
 pub(crate) mod config;
+
+use std::{
+    net::{SocketAddr, SocketAddrV4},
+    str::FromStr,
+};
+
+use crate::protocol::StreamProtocol;
+use tokio::net::{TcpStream, UdpSocket};
 
 #[derive(Clone)]
 pub(crate) struct TcpService {
@@ -21,6 +27,7 @@ impl TcpService {
     }
 }
 
+#[derive(Clone)]
 pub(crate) struct UdpService {
     pub(crate) config: config::ServiceConfigFields,
 }
@@ -30,18 +37,29 @@ impl UdpService {
         Self { config }
     }
 
-    pub(crate) async fn get_connection(&self) -> Result<UdpSocket, tokio::io::Error> {
+    pub(crate) fn get_address(&self) -> SocketAddr {
         // TODO: load balancing
         let ip = self.config.backends[0].ip.clone();
         let port = self.config.backends[0].port.clone();
 
-        UdpSocket::bind((ip, port)).await
+        // TODO : check on instantiation
+        SocketAddr::V4(SocketAddrV4::from_str(&format!("{}:{}", ip, port)).unwrap())
     }
 }
 
+#[derive(Clone)]
 pub(crate) enum Service {
     Tcp(TcpService),
     Udp(UdpService),
+}
+
+impl Service {
+    pub(crate) fn get_protocol(&self) -> StreamProtocol {
+        match self {
+            Service::Tcp(_) => StreamProtocol::Tcp,
+            Service::Udp(_) => StreamProtocol::Udp,
+        }
+    }
 }
 
 impl Service {

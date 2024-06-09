@@ -1,12 +1,13 @@
 pub(crate) mod cli;
 
+mod protocol;
 mod server;
 mod service;
 
 use clap::Parser;
 use cli::Args;
 use futures::future::join_all;
-use server::stream::{StreamServer, StreamServerConfig};
+use server::stream::{StreamServer, StreamServerConfig, TcpServer, UdpServer};
 use service::{config::StreamServiceConfig, Service, TcpService, UdpService};
 use std::{collections::HashMap, fs};
 
@@ -29,27 +30,41 @@ async fn main() {
             (
                 name,
                 match config {
-                    StreamServiceConfig::Tcp(config) => TcpService::new(config),
-                    // TODO: UDP
-                    StreamServiceConfig::Udp(config) => TcpService::new(config),
+                    StreamServiceConfig::Tcp(config) => Service::Tcp(TcpService::new(config)),
+                    StreamServiceConfig::Udp(config) => Service::Udp(UdpService::new(config)),
                 },
             )
         })
         .collect();
 
     let servers = config.stream.servers.into_iter().map(|config| {
-        let service = match &config {
-            StreamServerConfig::Tcp(config) => config,
-            // TODO: UDP
-            StreamServerConfig::Udp(config) => config,
+        let service_name = match &config {
+            StreamServerConfig::Tcp(config) => config.service.clone(),
+            StreamServerConfig::Udp(config) => config.service.clone(),
         };
 
         let service = services
-            .get(&service.service)
+            .get(&service_name)
             .expect("Service not found")
             .clone();
 
-        StreamServer::new(config, service)
+        match (config, service) {
+            (StreamServerConfig::Tcp(config), Service::Tcp(service)) => {
+                StreamServer::tcp(config, service)
+            }
+            (StreamServerConfig::Udp(config), Service::Udp(service)) => {
+                StreamServer::udp(config, service)
+            }
+            (server_config, service) => {
+                // NOTE: What are we going to do when we have a dynamic configuration? Maybe some
+                // pre-validation step?
+                panic!(
+                    "Invalid stream service config, server and an upstream service must use same protocol. Server is {:?}, service is {:?}",
+                    server_config.get_protocol(),
+                    service.get_protocol()
+                );
+            }
+        }
     });
 
     let futures = servers.map(|server| server.run());
