@@ -6,7 +6,7 @@ use std::{
 };
 
 use crate::protocol::StreamProtocol;
-use tokio::net::{TcpStream, UdpSocket};
+use tokio::net::TcpStream;
 
 #[derive(Clone)]
 pub(crate) struct TcpService {

@@ -7,8 +7,8 @@ mod service;
 use clap::Parser;
 use cli::Args;
 use futures::future::join_all;
-use server::stream::{StreamServer, StreamServerConfig, TcpServer, UdpServer};
-use service::{config::StreamServiceConfig, Service, TcpService, UdpService};
+use server::stream::{StreamServer, StreamServerConfig};
+use service::Service;
 use std::{collections::HashMap, fs};
 
 #[tokio::main]
@@ -26,15 +26,7 @@ async fn main() {
         .stream
         .services
         .into_iter()
-        .map(|(name, config)| {
-            (
-                name,
-                match config {
-                    StreamServiceConfig::Tcp(config) => Service::Tcp(TcpService::new(config)),
-                    StreamServiceConfig::Udp(config) => Service::Udp(UdpService::new(config)),
-                },
-            )
-        })
+        .map(|(name, config)| (name, Service::new(config)))
         .collect();
 
     let servers = config.stream.servers.into_iter().map(|config| {
