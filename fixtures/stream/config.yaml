@@ -1,0 +1,5 @@
+servers:
+  stream:
+    - port: 8080
+      protocol: tcp
+

@@ -61,45 +61,67 @@ impl TcpServer {
 
             tokio::spawn(async move {
                 let mut peer_stream = stream;
-                let mut buffer = [0; DEFAULT_BUFFER_SIZE];
+                let mut buffer_client = [0; DEFAULT_BUFFER_SIZE];
+                let mut buffer_upstream = [0; DEFAULT_BUFFER_SIZE];
 
                 // TODO: fix unwraps?
                 loop {
-                    let bytes_from_client = peer_stream.read(&mut buffer).await.unwrap();
+                    let bytes_from_client = peer_stream.read(&mut buffer_client);
+                    let bytes_from_upstream = upstream.read(&mut buffer_upstream);
 
-                    if bytes_from_client == 0 {
-                        println!(
-                            "Peer {} disconnected closing connection to upstream",
-                            peer_addr
-                        );
+                    // Bidirectional listen implemented as a race of messeages from two sources
+                    // on every iteration. This works because read() is cancel safe and if one of
+                    // the futures wins the race it's guaranteed that the other one has not read
+                    // the stream so no bytes are lost.
+                    tokio::select! {
+                        // Listen for client messages and send them to upstream
+                        bytes_from_client = bytes_from_client => {
+                            let bytes_from_client = bytes_from_client.unwrap();
+                            if bytes_from_client == 0 {
+                                println!(
+                                    "Peer {} disconnected closing connection to upstream",
+                                    peer_addr
+                                );
 
-                        upstream.shutdown().await.unwrap();
-                        break;
+                                upstream.shutdown().await.unwrap();
+                                break;
+                            }
+
+                            println!(
+                                "Received {} bytes from client, sending to upstream {}",
+                                bytes_from_client,
+                                upstream.peer_addr().unwrap()
+                            );
+
+                            upstream.write(&buffer_client[..bytes_from_client]).await.unwrap();
+
+                            println!("Sent");
+
+                        },
+                        // Listen for upstream messages and send them to client
+                        bytes_from_upstream = bytes_from_upstream => {
+                            let bytes_from_upstream = bytes_from_upstream.unwrap();
+
+                            if bytes_from_upstream == 0 {
+                                println!(
+                                    "Upstream {} disconnected closing connection to peer",
+                                    peer_addr
+                                );
+                                peer_stream.shutdown().await.unwrap();
+                                break;
+                            }
+
+                            println!(
+                                "Received {} bytes from upstream, sending to client",
+                                bytes_from_upstream
+                            );
+
+                            peer_stream
+                                .write(&buffer_upstream[..bytes_from_upstream])
+                                .await
+                                .unwrap();
+                        }
                     }
-
-                    println!(
-                        "Received {} bytes from client, sending to upstream",
-                        bytes_from_client
-                    );
-
-                    upstream.write(&buffer[..bytes_from_client]).await.unwrap();
-
-                    let bytes_from_upstream = upstream.read(&mut buffer).await.unwrap();
-
-                    if bytes_from_upstream == 0 {
-                        peer_stream.shutdown().await.unwrap();
-                        break;
-                    }
-
-                    println!(
-                        "Received {} bytes from upstream, sending to client",
-                        bytes_from_upstream
-                    );
-
-                    peer_stream
-                        .write(&buffer[..bytes_from_client])
-                        .await
-                        .unwrap();
                 }
             });
         }
