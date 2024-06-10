@@ -1,3 +1,7 @@
+use std::collections::HashMap;
+use std::sync::Arc;
+use std::time::Duration;
+
 use crate::protocol::StreamProtocol;
 use serde::{Deserialize, Serialize};
 
@@ -107,29 +111,128 @@ pub(crate) struct UdpServer {
     pub(crate) service: UdpService,
 }
 
+const UDP_RESPONSE_TIMEOUT: tokio::time::Duration = Duration::from_secs(10);
+
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use tokio::sync::Mutex;
+
+struct UdpConection {
+    client: SocketAddr,
+    reciever_socket: Arc<UdpSocket>,
+    upstream_address: SocketAddr,
+    server: Arc<UdpSocket>,
+
+    timeout: tokio::time::Duration,
+
+    pub(crate) is_serving: bool,
+    pub(crate) fake_connection: bool,
+}
+
+impl UdpConection {
+    async fn new(client: SocketAddr, upstream_address: SocketAddr, server: Arc<UdpSocket>) -> Self {
+        Self {
+            client,
+            reciever_socket: Arc::new(UdpSocket::bind("0.0.0.0:0").await.unwrap()),
+            upstream_address,
+            server,
+            timeout: UDP_RESPONSE_TIMEOUT,
+            is_serving: false,
+            fake_connection: false,
+        }
+    }
+
+    async fn register_client_message(&self, message: Vec<u8>) {
+        self.reciever_socket
+            .send_to(&message, self.upstream_address)
+            .await
+            .unwrap();
+    }
+
+    fn serve_bidirectional(&mut self) {
+        use tokio::time::interval;
+
+        let mut buffer = [0; DEFAULT_BUFFER_SIZE];
+        let reciever_socket = self.reciever_socket.clone();
+        let upstream_address = self.upstream_address.clone();
+        let server = self.server.clone();
+        let client = self.client.clone();
+
+        self.is_serving = true;
+
+        tokio::spawn(async move {
+            println!(
+                "Serving bidirectional connection for {} and {}",
+                client, upstream_address
+            );
+
+            // TODO add race with timeout to finish the task and clean up the connection after some time
+            loop {
+                tokio::select! {
+                    result = reciever_socket.recv_from(&mut buffer) => {
+                        match result {
+                            Ok((bytes_read, peer_addr)) => {
+                                if peer_addr != upstream_address {
+                                    println!("Received message from an unknown peer. Skipping the message.",);
+
+                                    continue;
+                                }
+
+                                println!("Received message from {}", peer_addr);
+
+                                server.send_to(&buffer[..bytes_read], client).await.unwrap();
+
+                                println!("Sent message to {}", client);
+                            }
+                            Err(_) => {
+                                todo!()
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    pub(crate) fn is_fake_connection(&self) -> bool {
+        self.fake_connection
+    }
+}
+
 impl UdpServer {
     pub(crate) async fn run(self) -> Result<(), Box<dyn std::error::Error>> {
         let fields = &self.config;
 
-        let server_socket = UdpSocket::bind(("0.0.0.0", fields.port)).await?;
-        let upstream_address = self.service.get_address();
+        let mut client_map = HashMap::new();
 
-        // TODO: Implement responding with a configurable timeoout
-        // For now it's just sending the UDP packet to the upstream
-        let local_receiver_socket = UdpSocket::bind("0.0.0.0:0").await?;
+        let server_socket = Arc::new(UdpSocket::bind(("0.0.0.0", fields.port)).await?);
 
         println!("Listening for UDP on port {}", fields.port);
-
-        let mut buffer = [0; DEFAULT_BUFFER_SIZE];
+        let mut counter = 0;
 
         loop {
+            let mut buffer = [0; DEFAULT_BUFFER_SIZE];
             let (bytes_read, peer_addr) = server_socket.recv_from(&mut buffer).await?;
+            println!("{}", counter);
+
+            let upstream_address = self.service.get_address();
 
             println!("Received {} bytes from {}", bytes_read, peer_addr);
 
-            local_receiver_socket
-                .send_to(&buffer[..bytes_read], upstream_address)
-                .await?;
+            let possible_new_connection =
+                UdpConection::new(peer_addr, upstream_address, server_socket.clone()).await;
+            let connection = client_map
+                .entry(peer_addr)
+                .or_insert_with(|| possible_new_connection);
+
+            connection
+                .register_client_message(buffer[..bytes_read].to_vec())
+                .await;
+
+            if !connection.is_serving {
+                connection.serve_bidirectional();
+            }
+
+            counter += 1;
         }
     }
 }
