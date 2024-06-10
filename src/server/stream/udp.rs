@@ -1,4 +1,5 @@
 use std::collections::hash_map::Entry;
+use std::time::{Duration, Instant};
 use std::{collections::HashMap, net::SocketAddr, sync::Arc};
 
 use tokio::net::UdpSocket;
@@ -7,6 +8,7 @@ use tokio::sync::{oneshot, Mutex};
 use crate::service::UdpService;
 
 const DEFAULT_BUFFER_SIZE: usize = 8 * 1024; // 8KB
+const DEFAULT_TIME_TO_LIVE: Duration = Duration::from_secs(10);
 
 pub(crate) struct UdpServer {
     pub(crate) config: StreamFields,
@@ -21,7 +23,11 @@ struct UdpConnection {
     upstream_address: SocketAddr,
     server: Arc<UdpSocket>,
     close_tx: Option<oneshot::Sender<()>>,
-    pub(crate) is_serving: bool,
+    is_serving: bool,
+
+    // NOTE: Maybe it makes sense to separate this into a separate struct
+    last_activity: Arc<Mutex<Instant>>,
+    time_to_live: Duration,
 }
 
 impl UdpConnection {
@@ -33,10 +39,17 @@ impl UdpConnection {
             server,
             close_tx: None,
             is_serving: false,
+
+            last_activity: Arc::new(Mutex::new(Instant::now())),
+            time_to_live: DEFAULT_TIME_TO_LIVE,
         }
     }
 
     async fn relay_client_message(&self, message: Vec<u8>) {
+        {
+            *self.last_activity.lock().await = Instant::now();
+        }
+
         self.receiver_socket
             .send_to(&message, self.upstream_address)
             .await
@@ -53,6 +66,7 @@ impl UdpConnection {
         let upstream_address = self.upstream_address.clone();
         let server = self.server.clone();
         let client = self.client.clone();
+        let last_activity = self.last_activity.clone();
 
         let (close_tx, close_rx) = oneshot::channel();
         self.close_tx = Some(close_tx);
@@ -78,6 +92,10 @@ impl UdpConnection {
                                     continue;
                                 }
 
+                                {
+                                    *last_activity.lock().await = Instant::now();
+                                }
+
                                 println!("Received message from {}", peer_addr);
 
                                 server.send_to(&buffer[..bytes_read], client).await.unwrap();
@@ -86,29 +104,27 @@ impl UdpConnection {
                             }
                             Err(e) => {
                                 eprintln!("Error receiving from upstream: {}", e);
-                                return; // Exit the loop and task on error
+                                break;
                             }
                         }
                     }
                     _ = &mut close_rx => {
                         println!("Connection {} to {} is closing", client, upstream_address);
-                        return; // Exit the loop and task on close signal
+                        break;
                     }
                 }
             }
         });
     }
 
-    async fn close(&mut self) {
-        if !self.is_serving {
-            return;
-        }
-
+    fn close(mut self) {
         if let Some(close_tx) = self.close_tx.take() {
             let _ = close_tx.send(()); // Send the close signal
         }
+    }
 
-        self.is_serving = false;
+    async fn is_stale(&self) -> bool {
+        self.last_activity.lock().await.elapsed() > self.time_to_live
     }
 }
 
@@ -116,8 +132,31 @@ impl UdpServer {
     pub(crate) async fn run(self) -> Result<(), Box<dyn std::error::Error>> {
         let fields = &self.config;
 
-        let client_map = Arc::new(Mutex::new(HashMap::new()));
+        let client_map: Arc<Mutex<HashMap<SocketAddr, UdpConnection>>> =
+            Arc::new(Mutex::new(HashMap::new()));
         let server_socket = Arc::new(UdpSocket::bind(("0.0.0.0", fields.port)).await?);
+
+        let client_map_clone = client_map.clone();
+
+        tokio::spawn(async move {
+            let mut sec = tokio::time::interval(Duration::from_secs(1));
+
+            loop {
+                sec.tick().await;
+
+                let mut client_map = client_map_clone.lock().await;
+                let vec: Vec<SocketAddr> = client_map.keys().map(SocketAddr::clone).collect();
+
+                for addr in vec {
+                    if client_map.get(&addr).unwrap().is_stale().await {
+                        println!("Closing connection to {}", addr);
+                        if let Some(connection) = client_map.remove(&addr) {
+                            connection.close();
+                        }
+                    }
+                }
+            }
+        });
 
         println!("Listening for UDP on port {}", fields.port);
 
@@ -151,9 +190,7 @@ impl UdpServer {
                         .relay_client_message(buffer[..bytes_read].to_vec())
                         .await;
 
-                    if !new_connection.is_serving {
-                        new_connection.serve_bidirectional();
-                    }
+                    new_connection.serve_bidirectional();
 
                     entry.insert(new_connection);
                 }
