@@ -1,0 +1,19 @@
+http:
+  servers:
+    - name: http-1
+      port: 8080
+      version: 1
+  services:
+    http-1-service-8081:
+      backends:
+      - port: 8081
+        ip: 127.0.0.1
+  routes:
+  - name: http-1-route
+    server: http-1
+    rules:
+      - matches:
+        - path:
+            type: Exact
+            value: /exact
+        backend: http-1-service-8081

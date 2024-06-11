@@ -1,11 +1,15 @@
 mod tcp;
 mod udp;
 
-use crate::protocol::StreamProtocol;
-use crate::service::{TcpService, UdpService};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+
 use tcp::TcpServer;
 use udp::UdpServer;
+
+use crate::protocol::StreamProtocol;
+use crate::service::config::StreamServiceConfig;
+use crate::service::{TcpService, UdpService};
 
 #[derive(Deserialize, Serialize, Debug)]
 pub(crate) struct StreamFields {
@@ -19,6 +23,12 @@ pub(crate) struct StreamFields {
 pub(crate) enum StreamServerConfig {
     Tcp(StreamFields),
     Udp(StreamFields),
+}
+#[derive(Deserialize, Serialize, Debug)]
+#[serde(rename_all = "kebab-case")]
+pub(crate) struct StreamingConfig {
+    pub(crate) servers: Vec<StreamServerConfig>,
+    pub(crate) services: HashMap<String, StreamServiceConfig>,
 }
 
 impl StreamServerConfig {

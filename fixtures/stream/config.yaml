@@ -1,5 +1,21 @@
-servers:
-  stream:
-    - port: 8080
+stream:
+  servers:
+    - name: tcp-server
+      port: 8082
       protocol: tcp
-
+      service: tcp-service
+    - name: udp-server
+      port: 8081
+      protocol: udp
+      service: udp-service
+  services:
+    tcp-service:
+      protocol: tcp
+      backends:
+      - port: 8080
+        ip: 127.0.0.1
+    udp-service:
+      protocol: udp
+      backends:
+      - port: 8080
+        ip: 127.0.0.1
