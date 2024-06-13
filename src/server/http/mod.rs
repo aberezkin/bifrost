@@ -75,17 +75,11 @@ pub(crate) struct HttpServer {
 }
 
 use bytes::Bytes;
-use http_body_util::Full;
-use hyper::{server::conn::http1, service::service_fn, Request, Response};
-use hyper_util::rt::{TokioIo, TokioTimer};
+use http_body_util::{combinators::BoxBody, BodyExt, Empty, Full};
+use hyper::{body::Incoming, server::conn::http1, service::service_fn, Method, Request, Response};
+use hyper_util::rt::TokioIo;
 use std::net::SocketAddr;
 use tokio::net::TcpListener;
-
-// An async function that consumes a request, does nothing with it and returns a
-// response.
-async fn hello(_: Request<impl hyper::body::Body>) -> Result<Response<Full<Bytes>>, Infallible> {
-    Ok(Response::new(Full::new(Bytes::from("Hello World!"))))
-}
 
 impl HttpServer {
     pub(crate) fn new(config: HttpServerConfig) -> Self {
@@ -115,8 +109,7 @@ impl HttpServer {
 
             tokio::spawn(async move {
                 if let Err(err) = http1::Builder::new()
-                    .timer(TokioTimer::new())
-                    .serve_connection(io, service_fn(hello))
+                    .serve_connection(io, service_fn(Self::proxy_request))
                     .await
                 {
                     println!("Error serving connection: {:?}", err);
@@ -125,5 +118,57 @@ impl HttpServer {
         }
     }
 
-    pub(crate) fn close() {}
+    async fn proxy_request(
+        req: Request<Incoming>,
+    ) -> Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error> {
+        // TODO: http2 backend support
+        use hyper::client::conn::http1;
+        use tokio::net::TcpStream;
+
+        println!("{:?}", req);
+        // NOTE: Some considerations:
+        //
+        // NOTE: There're route matchers that can match on route, method, headers and query
+        // which means that before we can route a request we need to check these and
+        // find the service they match. Finding the service should be the FIRST step as if
+        // there's no service found, any work done with the request is for nothing.
+        //
+        // NOTE: After we foudn the service, we might need to apply so called "filters" to the request.
+        // https://gateway-api.sigs.k8s.io/reference/spec/#gateway.networking.k8s.io%2fv1.HTTPRouteFilter
+        // HttpRouteFilter are modifying the request before it's sent to the service
+        // These can modify request headers and response headers, mirror a request to another
+        // service, rewrite a URL or redirect a request.
+        // When implementing these, consider only implement Core ones first and get back to
+        // Extended onles later.
+        //
+        // NOTE: If we have a redirect filter we just respond with a redirect applying response headers filter
+        //
+        // NOTE: Now we actually need to send the request to the service. We the service to get the
+        // first byte as sook as possible. But we can't send it before we actually apply the
+        // request headers and the url rewrite filters. Once we have done that we can finally send
+        // the headers to the service and start sending the body.
+        //
+        // NOTE: We can start sending the mirrored request in parallel tokio task. Maybe even force it to be in a
+        // different thread so it doesn't affect the main volume of traffic in any way, but that
+        // might be complicated and actually less performant.
+        //
+        // NOTE: It would be nice to get the headers as early as possible so that we can start
+        // applying the filters and stream the response to the client.
+
+        let backend_addr: SocketAddr = ([0, 0, 0, 0], 3000).into();
+        let stream = TcpStream::connect(backend_addr).await.unwrap();
+        let io = TokioIo::new(stream);
+
+        let (mut sender, conn) = http1::Builder::new().handshake(io).await.unwrap();
+
+        tokio::spawn(async move {
+            if let Err(err) = conn.await {
+                println!("Connection failed: {:?}", err);
+            }
+        });
+
+        let res = sender.send_request(req).await.unwrap();
+
+        Ok(res.map(|res| res.boxed()))
+    }
 }

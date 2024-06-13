@@ -14,6 +14,8 @@ use std::{collections::HashMap, fs};
 
 #[tokio::main]
 async fn main() {
+    tracing_subscriber::fmt::init();
+
     let args = Args::parse();
 
     let config_contents = fs::read_to_string(&args.config).expect("Failed to read config file");
@@ -25,7 +27,7 @@ async fn main() {
 
     let server::Config { stream, http } = config;
 
-    let mut stream_servers = if let Some(stream) = stream {
+    let stream_servers = stream.map_or(vec![], |stream| {
         let services: HashMap<_, _> = stream
             .services
             .into_iter()
@@ -63,19 +65,15 @@ async fn main() {
         });
 
         servers.map(|server| server.run()).collect()
-    } else {
-        vec![]
-    };
+    });
 
     use crate::server::http::HttpServer;
 
-    let mut http_servers = if let Some(http) = http {
+    let http_servers = http.map_or(vec![], |http| {
         let servers = http.servers.into_iter().map(HttpServer::new);
 
         servers.map(|server| server.run()).collect()
-    } else {
-        vec![]
-    };
+    });
 
     // We need to do these join hoops to make all servers run in parallel
     let stream_servers = join_all(stream_servers);
