@@ -1,4 +1,4 @@
-use std::{collections::HashMap, convert::Infallible};
+use std::{collections::HashMap, convert::Infallible, net::IpAddr};
 
 use serde::{Deserialize, Serialize};
 
@@ -7,6 +7,7 @@ use crate::service::config::BackendDefinition;
 #[derive(Deserialize, Serialize, Debug)]
 pub(crate) struct HttpServerFields {
     pub(crate) port: u16,
+    pub(crate) name: String,
 }
 
 #[derive(Deserialize, Serialize, Debug)]
@@ -23,45 +24,96 @@ pub(crate) struct HttpService {
     backends: Vec<BackendDefinition>,
 }
 
+impl HttpService {
+    async fn get_connection(&self) -> std::io::Result<TcpStream> {
+        // TODO: load balancing
+        self.backends.get(0).unwrap().get_connection().await
+    }
+
+    async fn send_request(
+        &self,
+        req: Request<Incoming>,
+    ) -> Result<Response<BoxBody<Bytes, hyper::Error>>, Infallible> {
+        use hyper::client::conn::http1;
+
+        let stream = self.get_connection().await.unwrap();
+
+        let io = TokioIo::new(stream);
+
+        let (mut sender, conn) = http1::Builder::new().handshake(io).await.unwrap();
+
+        tokio::spawn(async move {
+            if let Err(err) = conn.await {
+                println!("Connection failed: {:?}", err);
+            }
+        });
+
+        let res = sender.send_request(req).await.unwrap();
+
+        Ok(res.map(|res| res.boxed()))
+    }
+}
+
 #[derive(Deserialize, Serialize, Debug)]
 pub(crate) enum StringMatchType {
     Exact,
     Prefix,
-    Regex,
+    // TODO: regex support
+    //Regex,
 }
 
 #[derive(Deserialize, Serialize, Debug)]
 pub(crate) struct StringMatch {
     pub(crate) r#type: StringMatchType,
+    // TODO: better type?
     pub(crate) value: String,
 }
 
+// TODO: tests and matchers module
+impl StringMatch {
+    pub(crate) fn matches(&self, value: &str) -> bool {
+        match self.r#type {
+            StringMatchType::Exact => value == self.value,
+            // TODO: proper prefix matching Prefix:/abc should match /abc/def but not /abcdef
+            StringMatchType::Prefix => value.starts_with(self.value),
+        }
+    }
+}
+
 #[derive(Deserialize, Serialize, Debug)]
-pub(crate) struct HttpRouteMatch {
+pub(crate) struct Matcher {
     // NOTE: All fields here should be matched using AND
     pub(crate) path: StringMatch,
     // TODO: method, headers, query
 }
 
+impl Matcher {
+    pub(crate) fn matches(&self, req: &Request<Incoming>) -> bool {
+        // TODO: method, headers, query
+        self.path.matches(&req.uri().path())
+    }
+}
+
 #[derive(Deserialize, Serialize, Debug)]
-pub(crate) struct HttpRouteRule {
+pub(crate) struct HttpRouteRuleConfig {
     // NOTE: These ones are chained using OR
-    pub(crate) matches: Vec<HttpRouteMatch>,
+    pub(crate) matches: Vec<Matcher>,
     pub(crate) backend: String,
 }
 
 #[derive(Deserialize, Serialize, Debug)]
-pub(crate) struct HttpRoute {
+pub(crate) struct HttpRouteConfig {
     pub(crate) name: String,
+    pub(crate) hostnames: Option<Vec<String>>,
     pub(crate) server: String,
-    pub(crate) rules: Vec<HttpRouteRule>,
+    pub(crate) rules: Vec<HttpRouteRuleConfig>,
 }
 
 #[derive(Deserialize, Serialize, Debug)]
 pub(crate) struct HttpConfig {
-    pub(crate) servers: Vec<HttpServerConfig>,
+    pub(crate) servers: Vec<HttpServerFields>,
     pub(crate) services: HashMap<String, HttpService>,
-    pub(crate) routes: Vec<HttpRoute>,
+    pub(crate) routes: Vec<HttpRouteConfig>,
 }
 
 pub(crate) enum HttpVersion {
@@ -69,29 +121,60 @@ pub(crate) enum HttpVersion {
     V2,
 }
 
+use std::sync::Arc;
+
+pub(crate) struct HttpRule {
+    // TODO: stricter type
+    pub(crate) matchers: Vec<Matcher>,
+    backend: Arc<HttpService>,
+}
+
+impl HttpRule {
+    fn matches(&self, req: &Request<Incoming>) -> bool {
+        if self.matchers.is_empty() {
+            return true;
+        }
+
+        self.matchers.iter().all(|matcher| matcher.matches(req))
+    }
+}
+
+// This route is def on steroids
+// Thanks networking-sig
+impl HttpRule {
+    pub(crate) fn new(matchers: Vec<Matcher>, backend: Arc<HttpService>) -> Self {
+        Self { matchers, backend }
+    }
+}
+
+pub(crate) struct HttpRoute {
+    pub(crate) hostnames: Vec<String>,
+    pub(crate) rules: Vec<HttpRule>,
+}
+
+impl HttpRoute {
+    fn find_matching_rule(&self, req: &Request<Incoming>) -> Option<&HttpRule> {
+        self.rules.iter().find(|rule| rule.matches(req))
+    }
+}
+
 pub(crate) struct HttpServer {
-    version: HttpVersion,
     port: u16,
+    routes: Arc<Vec<HttpRoute>>,
 }
 
 use bytes::Bytes;
-use http_body_util::{combinators::BoxBody, BodyExt, Empty, Full};
-use hyper::{body::Incoming, server::conn::http1, service::service_fn, Method, Request, Response};
+use http_body_util::{combinators::BoxBody, BodyExt, Full};
+use hyper::{body::Incoming, server::conn::http1, service::service_fn, Request, Response};
 use hyper_util::rt::TokioIo;
 use std::net::SocketAddr;
-use tokio::net::TcpListener;
+use tokio::net::{TcpListener, TcpStream};
 
 impl HttpServer {
-    pub(crate) fn new(config: HttpServerConfig) -> Self {
-        match config {
-            HttpServerConfig::V1(config) => HttpServer {
-                version: HttpVersion::V1,
-                port: config.port,
-            },
-            HttpServerConfig::V2(config) => HttpServer {
-                version: HttpVersion::V2,
-                port: config.port,
-            },
+    pub(crate) fn new(config: HttpServerFields, routes: Vec<HttpRoute>) -> Self {
+        Self {
+            port: config.port,
+            routes: Arc::new(routes),
         }
     }
 
@@ -101,30 +184,32 @@ impl HttpServer {
         let listener = TcpListener::bind(addr).await?;
 
         println!("Listening for HTTP on port {}", self.port);
-
         loop {
             let (stream, _) = listener.accept().await.unwrap();
 
             let io = TokioIo::new(stream);
 
+            let routes = self.routes.clone();
+
+            let service = service_fn(move |req| {
+                let routes = routes.clone();
+
+                async move { Self::proxy_request(req, routes).await }
+            });
+
             tokio::spawn(async move {
-                if let Err(err) = http1::Builder::new()
-                    .serve_connection(io, service_fn(Self::proxy_request))
-                    .await
-                {
+                if let Err(err) = http1::Builder::new().serve_connection(io, service).await {
                     println!("Error serving connection: {:?}", err);
                 }
             });
         }
     }
 
+    // TODO: http2 backend support
     async fn proxy_request(
         req: Request<Incoming>,
-    ) -> Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error> {
-        // TODO: http2 backend support
-        use hyper::client::conn::http1;
-        use tokio::net::TcpStream;
-
+        routes: Arc<Vec<HttpRoute>>,
+    ) -> Result<Response<BoxBody<Bytes, hyper::Error>>, Infallible> {
         println!("{:?}", req);
         // NOTE: Some considerations:
         //
@@ -155,20 +240,30 @@ impl HttpServer {
         // NOTE: It would be nice to get the headers as early as possible so that we can start
         // applying the filters and stream the response to the client.
 
-        let backend_addr: SocketAddr = ([0, 0, 0, 0], 3000).into();
-        let stream = TcpStream::connect(backend_addr).await.unwrap();
-        let io = TokioIo::new(stream);
+        let host = req.headers().get("host").unwrap().to_str().unwrap();
 
-        let (mut sender, conn) = http1::Builder::new().handshake(io).await.unwrap();
+        // TODO: There might be a better way to do this.
+        // maybe hashmap as always???
+        let route = routes
+            .iter()
+            .find(|route| route.hostnames.contains(&host.to_string()));
 
-        tokio::spawn(async move {
-            if let Err(err) = conn.await {
-                println!("Connection failed: {:?}", err);
+        if let Some(route) = route {
+            let matching_rule = route.find_matching_rule(&req);
+
+            if let Some(rule) = matching_rule {
+                rule.backend.send_request(req).await
+            } else {
+                Ok(Response::new(full("Not found")))
             }
-        });
-
-        let res = sender.send_request(req).await.unwrap();
-
-        Ok(res.map(|res| res.boxed()))
+        } else {
+            Ok(Response::new(full("Not found")))
+        }
     }
+}
+
+fn full<T: Into<Bytes>>(chunk: T) -> BoxBody<Bytes, hyper::Error> {
+    Full::new(chunk.into())
+        .map_err(|never| match never {})
+        .boxed()
 }

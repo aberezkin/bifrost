@@ -1,3 +1,4 @@
+// TODO: break this filed down
 pub(crate) mod cli;
 
 mod protocol;
@@ -8,7 +9,10 @@ use clap::Parser;
 use cli::Args;
 use futures::future::join_all;
 use futures::join;
-use server::stream::{StreamServer, StreamServerConfig};
+use server::{
+    http::{HttpRoute, HttpRule},
+    stream::{StreamServer, StreamServerConfig},
+};
 use service::Service;
 use std::{collections::HashMap, fs};
 
@@ -68,16 +72,69 @@ async fn main() {
     });
 
     use crate::server::http::HttpServer;
+    use std::collections::hash_map::Entry;
+    use std::sync::Arc;
 
     let http_servers = http.map_or(vec![], |http| {
-        let servers = http.servers.into_iter().map(HttpServer::new);
+        let servers = http.servers;
+        let routes = http.routes;
 
-        servers.map(|server| server.run()).collect()
+        let services_map = http
+            .services
+            .into_iter()
+            .map(|(name, backend)| (name, Arc::new(backend)))
+            .collect::<HashMap<_, _>>();
+
+        let mut route_map = HashMap::<String, Vec<HttpRoute>>::new();
+
+        for route in routes {
+            let server_name = route.server;
+
+            let hostnames = route.hostnames;
+            let rules = route
+                .rules
+                .into_iter()
+                .map(|rule| {
+                    let backend = services_map.get(&rule.backend).unwrap().clone();
+
+                    HttpRule::new(rule.matches, backend)
+                })
+                .collect();
+
+            let route = HttpRoute {
+                hostnames: hostnames.unwrap_or_default(),
+                rules,
+            };
+
+            match route_map.entry(server_name) {
+                Entry::Occupied(mut entry) => {
+                    entry.get_mut().push(route);
+                }
+                Entry::Vacant(entry) => {
+                    entry.insert(vec![route]);
+                }
+            }
+        }
+
+        let servers = servers
+            .into_iter()
+            .map(|config| {
+                let routes = route_map.remove(&config.name).unwrap();
+
+                if routes.is_empty() {
+                    panic!("No routes found for server {}", config.name);
+                }
+
+                HttpServer::new(config, routes)
+            })
+            .collect();
+
+        servers
     });
 
     // We need to do these join hoops to make all servers run in parallel
     let stream_servers = join_all(stream_servers);
-    let http_servers = join_all(http_servers);
+    let http_servers = join_all(http_servers.into_iter().map(|server| server.run()));
 
     // NOTE: we can't directly join the two vectors of futurees because they are not the same type
     // see: https://users.rust-lang.org/t/expected-opaque-type-found-a-different-opaque-type-when-trying-futures-join-all/40596

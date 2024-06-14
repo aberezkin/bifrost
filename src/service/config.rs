@@ -1,4 +1,7 @@
+use std::net::IpAddr;
+
 use serde::{Deserialize, Serialize};
+use tokio::net::TcpStream;
 
 #[derive(Deserialize, Serialize, Debug, Default, Clone)]
 pub(crate) enum LoadBalancingAlgorithm {
@@ -11,7 +14,13 @@ pub(crate) enum LoadBalancingAlgorithm {
 pub(crate) struct BackendDefinition {
     pub(crate) port: u16,
     // TODO: support for hostnames
-    pub(crate) ip: String,
+    pub(crate) ip: IpAddr,
+}
+
+impl BackendDefinition {
+    pub(crate) async fn get_connection(&self) -> std::io::Result<TcpStream> {
+        TcpStream::connect((self.ip, self.port)).await
+    }
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone)]

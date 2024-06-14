@@ -4,16 +4,27 @@ http:
       port: 8080
       version: 1
   services:
-    http-1-service-8081:
+    http-1-service:
       backends:
-      - port: 8081
+      - port: 3000
         ip: 127.0.0.1
   routes:
   - name: http-1-route
     server: http-1
+    hostnames:
+      - "sussy.com"
     rules:
-      - matches:
+      - backend: http-1-service
+        matches:
         - path:
             type: Exact
             value: /exact
-        backend: http-1-service-8081
+      - backend: http-1-service
+        matches:
+        - path:
+            type: Prefix
+            value: /prefix
+        # Thats actually an array in the API
+        # but here we create a service from this array
+        # in our own terms. It looks like our internal API is more convinient 🤷
+        # for more general use cases (e.g. reusing a service)
