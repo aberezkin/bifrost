@@ -64,9 +64,9 @@ impl UdpConnection {
 
         let mut buffer = [0; DEFAULT_BUFFER_SIZE];
         let receiver_socket = self.receiver_socket.clone();
-        let upstream_address = self.upstream_address.clone();
+        let upstream_address = self.upstream_address;
+        let client = self.client;
         let server = self.server.clone();
-        let client = self.client.clone();
         let last_activity = self.last_activity.clone();
 
         let (close_tx, close_rx) = oneshot::channel();

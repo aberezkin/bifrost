@@ -116,7 +116,7 @@ async fn main() {
             }
         }
 
-        let servers = servers
+        servers
             .into_iter()
             .map(|config| {
                 let routes = route_map.remove(&config.name).unwrap();
@@ -127,9 +127,7 @@ async fn main() {
 
                 HttpServer::new(config, routes)
             })
-            .collect();
-
-        servers
+            .collect()
     });
 
     // We need to do these join hoops to make all servers run in parallel

@@ -67,7 +67,7 @@ impl TcpServer {
                                 upstream.peer_addr().unwrap()
                             );
 
-                            upstream.write(&buffer_client[..bytes_from_client]).await.unwrap();
+                            upstream.write_all(&buffer_client[..bytes_from_client]).await.unwrap();
 
                             println!("Sent");
 
@@ -91,7 +91,7 @@ impl TcpServer {
                             );
 
                             peer_stream
-                                .write(&buffer_upstream[..bytes_from_upstream])
+                                .write_all(&buffer_upstream[..bytes_from_upstream])
                                 .await
                                 .unwrap();
                         }
