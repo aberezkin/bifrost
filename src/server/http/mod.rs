@@ -1,5 +1,7 @@
 use std::{collections::HashMap, convert::Infallible, net::IpAddr};
 
+use http::StatusCode;
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 
 use crate::{server::host::Hostname, service::config::BackendDefinition};
@@ -55,27 +57,29 @@ impl HttpService {
 }
 
 #[derive(Deserialize, Serialize, Debug)]
-pub(crate) enum StringMatchType {
-    Exact,
-    Prefix,
+#[serde(tag = "type")]
+pub(crate) enum StringMatch {
+    Exact {
+        value: String,
+    },
+    Prefix {
+        value: String,
+    },
     // TODO: regex support
-    //Regex,
-}
-
-#[derive(Deserialize, Serialize, Debug)]
-pub(crate) struct StringMatch {
-    pub(crate) r#type: StringMatchType,
-    // TODO: better type?
-    pub(crate) value: String,
+    Regex {
+        #[serde(with = "serde_regex")]
+        value: Regex,
+    },
 }
 
 // TODO: tests and matchers module
 impl StringMatch {
-    pub(crate) fn matches(&self, value: &str) -> bool {
-        match self.r#type {
-            StringMatchType::Exact => value == self.value,
+    pub(crate) fn matches(&self, value_to_match: &str) -> bool {
+        match self {
+            StringMatch::Exact { value } => value_to_match == value,
             // TODO: proper prefix matching Prefix:/abc should match /abc/def but not /abcdef
-            StringMatchType::Prefix => value.starts_with(&self.value),
+            StringMatch::Prefix { value } => value_to_match.starts_with(value),
+            StringMatch::Regex { value } => value.is_match(value_to_match),
         }
     }
 }
@@ -249,11 +253,10 @@ impl HttpServer {
         // TODO: There might be a better way to do this.
         // maybe hashmap as always???
         let route = routes.iter().find(|route| {
-            route.hostnames.iter().any(|hostname| {
-                println!("I matched");
-
-                hostname.matches(&host)
-            })
+            route
+                .hostnames
+                .iter()
+                .any(|hostname| hostname.matches(&host))
         });
 
         println!("{:?}", route);
@@ -264,7 +267,7 @@ impl HttpServer {
             if let Some(rule) = matching_rule {
                 rule.backend.send_request(req).await
             } else {
-                Ok(Response::new(full("Not found")))
+                Ok(not_found())
             }
         } else {
             Ok(Response::new(full("Not found")))
@@ -276,4 +279,12 @@ fn full<T: Into<Bytes>>(chunk: T) -> BoxBody<Bytes, hyper::Error> {
     Full::new(chunk.into())
         .map_err(|never| match never {})
         .boxed()
+}
+
+fn not_found() -> Response<BoxBody<Bytes, hyper::Error>> {
+    Response::builder()
+        .status(StatusCode::NOT_FOUND)
+        .body(full("Not found"))
+        // FIX: expect
+        .expect("Failed to build response")
 }

@@ -15,6 +15,10 @@ http:
       - "sussy.com"
       - "*.sussy.com"
     rules:
+        # Backend is actually an array in the API
+        # but here we create a service from this array
+        # in our own terms. It looks like our internal API is more convinient 🤷
+        # for more general use cases (e.g. reusing a service)
       - backend: http-1-service
         matches:
         - path:
@@ -25,7 +29,8 @@ http:
         - path:
             type: Prefix
             value: /prefix
-        # Thats actually an array in the API
-        # but here we create a service from this array
-        # in our own terms. It looks like our internal API is more convinient 🤷
-        # for more general use cases (e.g. reusing a service)
+      - backend: http-1-service
+        matches:
+        - path:
+            type: Regex
+            value: /regex/[a-z]+
