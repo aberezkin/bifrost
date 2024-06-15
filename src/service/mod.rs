@@ -20,8 +20,8 @@ impl TcpService {
 
     pub(crate) async fn get_connection(&self) -> Result<TcpStream, tokio::io::Error> {
         // TODO: load balancing
-        let ip = self.config.backends[0].ip.clone();
-        let port = self.config.backends[0].port.clone();
+        let ip = self.config.backends[0].ip;
+        let port = self.config.backends[0].port;
 
         TcpStream::connect((ip, port)).await
     }
@@ -39,8 +39,8 @@ impl UdpService {
 
     pub(crate) fn get_address(&self) -> SocketAddr {
         // TODO: load balancing
-        let ip = self.config.backends[0].ip.clone();
-        let port = self.config.backends[0].port.clone();
+        let ip = self.config.backends[0].ip;
+        let port = self.config.backends[0].port;
 
         // TODO : check on instantiation
         SocketAddr::V4(SocketAddrV4::from_str(&format!("{}:{}", ip, port)).unwrap())
