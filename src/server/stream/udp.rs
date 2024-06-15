@@ -42,6 +42,7 @@ impl UdpConnection {
             is_serving: false,
 
             last_activity: Arc::new(Mutex::new(Instant::now())),
+            // TODO: make this configurable
             time_to_live: DEFAULT_TIME_TO_LIVE,
         }
     }
