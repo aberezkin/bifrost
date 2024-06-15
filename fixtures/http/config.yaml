@@ -13,6 +13,7 @@ http:
     server: http-1
     hostnames:
       - "sussy.com"
+      - "*.sussy.com"
     rules:
       - backend: http-1-service
         matches:

@@ -1,3 +1,4 @@
+pub(crate) mod host;
 pub(crate) mod http;
 pub(crate) mod stream;
 

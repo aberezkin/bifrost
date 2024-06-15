@@ -2,7 +2,7 @@ use std::{collections::HashMap, convert::Infallible, net::IpAddr};
 
 use serde::{Deserialize, Serialize};
 
-use crate::service::config::BackendDefinition;
+use crate::{server::host::Hostname, service::config::BackendDefinition};
 
 #[derive(Deserialize, Serialize, Debug)]
 pub(crate) struct HttpServerFields {
@@ -27,7 +27,7 @@ pub(crate) struct HttpService {
 impl HttpService {
     async fn get_connection(&self) -> std::io::Result<TcpStream> {
         // TODO: load balancing
-        self.backends.get(0).unwrap().get_connection().await
+        self.backends.first().unwrap().get_connection().await
     }
 
     async fn send_request(
@@ -75,7 +75,7 @@ impl StringMatch {
         match self.r#type {
             StringMatchType::Exact => value == self.value,
             // TODO: proper prefix matching Prefix:/abc should match /abc/def but not /abcdef
-            StringMatchType::Prefix => value.starts_with(self.value),
+            StringMatchType::Prefix => value.starts_with(&self.value),
         }
     }
 }
@@ -90,7 +90,7 @@ pub(crate) struct Matcher {
 impl Matcher {
     pub(crate) fn matches(&self, req: &Request<Incoming>) -> bool {
         // TODO: method, headers, query
-        self.path.matches(&req.uri().path())
+        self.path.matches(req.uri().path())
     }
 }
 
@@ -104,7 +104,7 @@ pub(crate) struct HttpRouteRuleConfig {
 #[derive(Deserialize, Serialize, Debug)]
 pub(crate) struct HttpRouteConfig {
     pub(crate) name: String,
-    pub(crate) hostnames: Option<Vec<String>>,
+    pub(crate) hostnames: Option<Vec<HostSpec>>,
     pub(crate) server: String,
     pub(crate) rules: Vec<HttpRouteRuleConfig>,
 }
@@ -123,6 +123,7 @@ pub(crate) enum HttpVersion {
 
 use std::sync::Arc;
 
+#[derive(Debug)]
 pub(crate) struct HttpRule {
     // TODO: stricter type
     pub(crate) matchers: Vec<Matcher>,
@@ -147,8 +148,9 @@ impl HttpRule {
     }
 }
 
+#[derive(Debug)]
 pub(crate) struct HttpRoute {
-    pub(crate) hostnames: Vec<String>,
+    pub(crate) hostnames: Vec<HostSpec>,
     pub(crate) rules: Vec<HttpRule>,
 }
 
@@ -169,6 +171,8 @@ use hyper::{body::Incoming, server::conn::http1, service::service_fn, Request, R
 use hyper_util::rt::TokioIo;
 use std::net::SocketAddr;
 use tokio::net::{TcpListener, TcpStream};
+
+use super::host::HostSpec;
 
 impl HttpServer {
     pub(crate) fn new(config: HttpServerFields, routes: Vec<HttpRoute>) -> Self {
@@ -240,13 +244,19 @@ impl HttpServer {
         // NOTE: It would be nice to get the headers as early as possible so that we can start
         // applying the filters and stream the response to the client.
 
-        let host = req.headers().get("host").unwrap().to_str().unwrap();
+        let host = Hostname::parse(req.headers().get("host").unwrap().to_str().unwrap()).unwrap();
 
         // TODO: There might be a better way to do this.
         // maybe hashmap as always???
-        let route = routes
-            .iter()
-            .find(|route| route.hostnames.contains(&host.to_string()));
+        let route = routes.iter().find(|route| {
+            route.hostnames.iter().any(|hostname| {
+                println!("I matched");
+
+                hostname.matches(&host)
+            })
+        });
+
+        println!("{:?}", route);
 
         if let Some(route) = route {
             let matching_rule = route.find_matching_rule(&req);
