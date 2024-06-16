@@ -9,7 +9,6 @@ use super::{matchers::Matcher, service::HttpService};
 
 #[derive(Debug)]
 pub(crate) struct HttpRule {
-    // TODO: stricter type
     pub(crate) matchers: Vec<Matcher>,
     backend: Arc<HttpService>,
 }

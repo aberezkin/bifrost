@@ -16,6 +16,8 @@ pub(crate) struct HttpService {
 impl HttpService {
     pub(super) async fn get_connection(&self) -> std::io::Result<TcpStream> {
         // TODO: load balancing
+        // e.g. give connections to different backends according
+        // to specified load balancing algo
         self.backends.first().unwrap().get_connection().await
     }
 

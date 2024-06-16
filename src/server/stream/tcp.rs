@@ -5,7 +5,7 @@ use tokio::{
 
 use crate::service::TcpService;
 
-use super::StreamFields;
+use super::TcpFields;
 
 // This buffer size is closest to the size of a memory page in most systems.
 // Ideally we can read the actual size using a package, but for now this is good enough.
@@ -13,7 +13,7 @@ use super::StreamFields;
 const DEFAULT_BUFFER_SIZE: usize = 4 * 1024; // 2KB
 
 pub(crate) struct TcpServer {
-    pub(crate) config: StreamFields,
+    pub(crate) config: TcpFields,
     pub(crate) service: TcpService,
 }
 

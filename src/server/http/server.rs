@@ -56,7 +56,7 @@ impl HttpServer {
         }
     }
 
-    // TODO: http2 backend support
+    // TODO: http2 backend and protocol support
     async fn proxy_request(
         req: Request<Incoming>,
         routes: Arc<Vec<HttpRoute>>,
@@ -89,6 +89,7 @@ impl HttpServer {
 
         // TODO: There might be a better way to do this.
         // a hashmap cache can be an option
+        // but should be invalidated in case of config update
         let route = routes.iter().find(|route| {
             route
                 .hostnames

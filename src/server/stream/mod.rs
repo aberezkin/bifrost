@@ -1,6 +1,7 @@
 mod tcp;
 mod udp;
 
+use duration_string::DurationString;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -12,18 +13,36 @@ use crate::service::config::StreamServiceConfig;
 use crate::service::{TcpService, UdpService};
 
 #[derive(Deserialize, Serialize, Debug)]
-pub(crate) struct StreamFields {
+pub(crate) struct TcpFields {
     pub(crate) port: u16,
     pub(crate) name: String,
     pub(crate) service: String,
 }
 
 #[derive(Deserialize, Serialize, Debug)]
+pub(crate) struct UdpFields {
+    pub(crate) port: u16,
+    pub(crate) name: String,
+    pub(crate) service: String,
+
+    /// Time during which the server is going to be holding a biderectional connection.
+    ///
+    /// When the server gets a message it's going to pass it to the specified backend
+    /// and wait for response on a dedicated port. This virtual connection is closed when there's
+    /// no message from peer or upstream for the specified duration.
+    ///
+    /// (NOTE: what to do when ports run out is there a
+    /// way to use the same port and underrstand which messages are for which peers?)
+    pub(crate) biderectional_connection_ttl: Option<DurationString>,
+}
+
+#[derive(Deserialize, Serialize, Debug)]
 #[serde(rename_all = "kebab-case", tag = "protocol")]
 pub(crate) enum StreamServerConfig {
-    Tcp(StreamFields),
-    Udp(StreamFields),
+    Tcp(TcpFields),
+    Udp(UdpFields),
 }
+
 #[derive(Deserialize, Serialize, Debug)]
 #[serde(rename_all = "kebab-case")]
 pub(crate) struct StreamingConfig {
@@ -46,12 +65,12 @@ pub(crate) enum StreamServer {
 }
 
 impl StreamServer {
-    pub(crate) fn tcp(config: StreamFields, service: TcpService) -> Self {
+    pub(crate) fn tcp(config: TcpFields, service: TcpService) -> Self {
         Self::Tcp(TcpServer { config, service })
     }
 
-    pub(crate) fn udp(config: StreamFields, service: UdpService) -> Self {
-        Self::Udp(UdpServer { config, service })
+    pub(crate) fn udp(config: UdpFields, service: UdpService) -> Self {
+        Self::Udp(UdpServer::new(config, service))
     }
 
     pub(crate) async fn run(self) -> Result<(), Box<dyn std::error::Error>> {

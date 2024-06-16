@@ -8,6 +8,12 @@ stream:
       port: 8081
       protocol: udp
       service: udp-service
+      biderectional_connection_ttl: 10s
+    - name: udp-server-2
+      port: 8082
+      protocol: udp
+      service: udp-service
+      biderectional_connection_ttl: 30s
   services:
     tcp-service:
       protocol: tcp

@@ -1,21 +1,46 @@
+use super::UdpFields;
 use std::collections::hash_map::Entry;
 use std::time::{Duration, Instant};
 use std::{collections::HashMap, net::SocketAddr, sync::Arc};
 
+use duration_string::DurationString;
 use tokio::net::UdpSocket;
 use tokio::sync::{oneshot, Mutex};
 
 use crate::service::UdpService;
 
 const DEFAULT_BUFFER_SIZE: usize = 8 * 1024; // 8KB
-const DEFAULT_TIME_TO_LIVE: Duration = Duration::from_secs(10);
 
 pub(crate) struct UdpServer {
-    pub(crate) config: StreamFields,
+    pub(crate) port: u16,
+
     pub(crate) service: UdpService,
+
+    /// Time during which the server is going to be holding a biderectional connection.
+    ///
+    /// When the server gets a message it's going to pass it to the specified backend
+    /// and wait for response on a dedicated port. This virtual connection is closed when there's
+    /// no message from peer or upstream for the specified duration.
+    ///
+    /// Default value is 10 seconds.
+    ///
+    /// (NOTE: what to do when ports run out is there a way to use the same port and
+    /// underrstand which messages are for which peers?)
+    pub(crate) biderectional_connection_ttl: Duration,
 }
 
-use super::StreamFields;
+impl UdpServer {
+    pub(crate) fn new(config: UdpFields, service: UdpService) -> Self {
+        Self {
+            port: config.port,
+            service,
+
+            biderectional_connection_ttl: config
+                .biderectional_connection_ttl
+                .map_or(Duration::from_secs(10), DurationString::into),
+        }
+    }
+}
 
 struct UdpConnection {
     client: SocketAddr,
@@ -26,26 +51,56 @@ struct UdpConnection {
     is_serving: bool,
 
     // NOTE: Maybe it makes sense to separate this into a separate struct
+    // that owns simple UdpConnection
     last_activity: Arc<Mutex<Instant>>,
     time_to_live: Duration,
 }
 
-impl UdpConnection {
-    async fn new(client: SocketAddr, upstream_address: SocketAddr, server: Arc<UdpSocket>) -> Self {
+struct UdpConnectionBuilder {
+    client: SocketAddr,
+    upstream_address: SocketAddr,
+    server: Arc<UdpSocket>,
+
+    time_to_live: Duration,
+}
+
+impl UdpConnectionBuilder {
+    const DEFAULT_TIME_TO_LIVE: Duration = Duration::from_secs(10);
+
+    fn new(client: SocketAddr, upstream_address: SocketAddr, server: Arc<UdpSocket>) -> Self {
         Self {
             client,
-            receiver_socket: Arc::new(UdpSocket::bind("0.0.0.0:0").await.unwrap()),
             upstream_address,
             server,
+
+            time_to_live: Self::DEFAULT_TIME_TO_LIVE,
+        }
+    }
+
+    fn time_to_live(&mut self, ttl: Duration) -> &mut Self {
+        self.time_to_live = ttl;
+
+        self
+    }
+
+    async fn build(self) -> UdpConnection {
+        UdpConnection {
+            client: self.client,
+            // FIX: unwrap
+            receiver_socket: Arc::new(UdpSocket::bind("0.0.0.0:0").await.unwrap()),
+            upstream_address: self.upstream_address,
+            server: self.server,
             close_tx: None,
             is_serving: false,
 
             last_activity: Arc::new(Mutex::new(Instant::now())),
             // TODO: make this configurable
-            time_to_live: DEFAULT_TIME_TO_LIVE,
+            time_to_live: self.time_to_live,
         }
     }
+}
 
+impl UdpConnection {
     async fn relay_client_message(&self, message: Vec<u8>) {
         {
             *self.last_activity.lock().await = Instant::now();
@@ -131,11 +186,10 @@ impl UdpConnection {
 
 impl UdpServer {
     pub(crate) async fn run(self) -> Result<(), Box<dyn std::error::Error>> {
-        let fields = &self.config;
-
         let client_map: Arc<Mutex<HashMap<SocketAddr, UdpConnection>>> =
             Arc::new(Mutex::new(HashMap::new()));
-        let server_socket = Arc::new(UdpSocket::bind(("0.0.0.0", fields.port)).await?);
+        let server_socket = Arc::new(UdpSocket::bind(("0.0.0.0", self.port)).await?);
+        let port = self.port;
 
         let client_map_clone = client_map.clone();
 
@@ -159,7 +213,7 @@ impl UdpServer {
             }
         });
 
-        println!("Listening for UDP on port {}", fields.port);
+        println!("Listening for UDP on port {}", port);
 
         loop {
             let mut buffer = [0; DEFAULT_BUFFER_SIZE];
@@ -183,9 +237,15 @@ impl UdpServer {
                         .await;
                 }
                 Entry::Vacant(entry) => {
-                    let mut new_connection =
-                        UdpConnection::new(peer_addr, upstream_address, server_socket.clone())
-                            .await;
+                    let mut builder = UdpConnectionBuilder::new(
+                        peer_addr,
+                        upstream_address,
+                        server_socket.clone(),
+                    );
+
+                    builder.time_to_live(self.biderectional_connection_ttl);
+
+                    let mut new_connection = builder.build().await;
 
                     new_connection
                         .relay_client_message(buffer[..bytes_read].to_vec())
