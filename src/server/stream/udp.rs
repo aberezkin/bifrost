@@ -30,7 +30,6 @@ struct UdpConnection {
     time_to_live: Duration,
 }
 
-// TODO: move to a separate file
 impl UdpConnection {
     async fn new(client: SocketAddr, upstream_address: SocketAddr, server: Arc<UdpSocket>) -> Self {
         Self {

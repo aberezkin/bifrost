@@ -1,8 +1,8 @@
 pub(crate) mod matchers;
+pub(crate) mod route;
 pub(crate) mod server;
 pub(crate) mod service;
 
-use hyper::{body::Incoming, Request};
 use service::HttpService;
 use std::collections::HashMap;
 
@@ -10,15 +10,9 @@ use super::host::HostSpec;
 
 use matchers::Matcher;
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
+use server::HttpServerFields;
 
 pub(crate) use server::HttpServer;
-
-#[derive(Deserialize, Serialize, Debug)]
-pub(crate) struct HttpServerFields {
-    pub(crate) port: u16,
-    pub(crate) name: String,
-}
 
 #[derive(Deserialize, Serialize, Debug)]
 #[serde(tag = "version")]
@@ -49,41 +43,4 @@ pub(crate) struct HttpConfig {
     pub(crate) servers: Vec<HttpServerFields>,
     pub(crate) services: HashMap<String, HttpService>,
     pub(crate) routes: Vec<HttpRouteConfig>,
-}
-
-#[derive(Debug)]
-pub(crate) struct HttpRule {
-    // TODO: stricter type
-    pub(crate) matchers: Vec<Matcher>,
-    backend: Arc<HttpService>,
-}
-
-impl HttpRule {
-    fn matches(&self, req: &Request<Incoming>) -> bool {
-        if self.matchers.is_empty() {
-            return true;
-        }
-
-        self.matchers.iter().all(|matcher| matcher.matches(req))
-    }
-}
-
-// This route is def on steroids
-// Thanks networking-sig
-impl HttpRule {
-    pub(crate) fn new(matchers: Vec<Matcher>, backend: Arc<HttpService>) -> Self {
-        Self { matchers, backend }
-    }
-}
-
-#[derive(Debug)]
-pub(crate) struct HttpRoute {
-    pub(crate) hostnames: Vec<HostSpec>,
-    pub(crate) rules: Vec<HttpRule>,
-}
-
-impl HttpRoute {
-    fn find_matching_rule(&self, req: &Request<Incoming>) -> Option<&HttpRule> {
-        self.rules.iter().find(|rule| rule.matches(req))
-    }
 }

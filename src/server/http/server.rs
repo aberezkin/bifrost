@@ -4,10 +4,17 @@ use http::StatusCode;
 use http_body_util::{combinators::BoxBody, BodyExt, Full};
 use hyper::{body::Incoming, server::conn::http1, service::service_fn, Request, Response};
 use hyper_util::rt::TokioIo;
+use serde::{Deserialize, Serialize};
 use std::{convert::Infallible, net::SocketAddr, sync::Arc};
 use tokio::net::TcpListener;
 
-use super::{HttpRoute, HttpServerFields};
+use super::route::HttpRoute;
+
+#[derive(Deserialize, Serialize, Debug)]
+pub(crate) struct HttpServerFields {
+    pub(crate) port: u16,
+    pub(crate) name: String,
+}
 
 pub(crate) struct HttpServer {
     port: u16,
@@ -54,7 +61,6 @@ impl HttpServer {
         req: Request<Incoming>,
         routes: Arc<Vec<HttpRoute>>,
     ) -> Result<Response<BoxBody<Bytes, hyper::Error>>, Infallible> {
-        println!("{:?}", req);
         // NOTE: Some considerations:
         //
         // NOTE: There're route matchers that can match on route, method, headers and query
@@ -76,6 +82,9 @@ impl HttpServer {
         // different thread so it doesn't affect the main volume of traffic in any way, but that
         // might be complicated and actually less performant.
 
+        println!("{}", req.uri().path());
+        println!("{}", req.method());
+
         let host = Hostname::parse(req.headers().get("host").unwrap().to_str().unwrap()).unwrap();
 
         // TODO: There might be a better way to do this.
@@ -87,17 +96,20 @@ impl HttpServer {
                 .any(|hostname| hostname.matches(&host))
         });
 
-        println!("{:?}", route);
+        println!("Is there matching route: {:?}", route.is_some());
 
         if let Some(route) = route {
+            println!("The route has matched");
+
             let matching_rule = route.find_matching_rule(&req);
 
             if let Some(rule) = matching_rule {
-                rule.backend.send_request(req).await
+                rule.send_request(req).await
             } else {
                 Ok(not_found())
             }
         } else {
+            println!("The route didn't match");
             Ok(Response::new(full("Not found")))
         }
     }

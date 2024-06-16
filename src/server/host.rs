@@ -52,12 +52,9 @@ impl HostSpec {
                 return Err(HostSpecParseError::InvalidWildcard);
             }
 
-            println!("{}", label);
             if label == "*" {
-                println!("WILDCARD");
                 wildcard = true;
             } else {
-                println!("LABEL");
                 if !host_label_regex.is_match(label) {
                     return Err(HostSpecParseError::InvalidLabel);
                 }

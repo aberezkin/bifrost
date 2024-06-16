@@ -34,3 +34,10 @@ http:
         - path:
             type: Regex
             value: /regex/[a-z]+
+      - backend: http-1-service
+        matches:
+        - path:
+            type: Exact
+            value: /method
+          method: POST
+

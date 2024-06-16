@@ -10,7 +10,7 @@ use cli::Args;
 use futures::future::join_all;
 use futures::join;
 use server::{
-    http::{HttpRoute, HttpRule},
+    http::route::{HttpRoute, HttpRule},
     stream::{StreamServer, StreamServerConfig},
 };
 use service::Service;
