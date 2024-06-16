@@ -1,3 +1,5 @@
+use std::str::FromStr;
+
 use regex::Regex;
 use serde::de::{Deserializer, Visitor};
 use serde::{Deserialize, Serialize, Serializer};
@@ -13,18 +15,21 @@ pub(crate) struct HostSpec {
 }
 
 #[derive(Debug, PartialEq, Display)]
-enum HostSpecParseError {
+pub(crate) enum HostSpecParseError {
     EmptyStr,
     EmptyLabel,
     InvalidLabel,
     InvalidWildcard,
 }
 
-impl HostSpec {
+impl FromStr for HostSpec {
+    type Err = HostSpecParseError;
+
     /// Hostname is the fully qualified domain name of a network host.
     /// This matches the RFC 1123 definition of a hostname with 2 notable exceptions:
     ///
-    /// 1. IPs are not allowed.
+    /// 1. IPs are not allowed. TODO: Implement this rule
+    ///
     /// 2. A hostname may be prefixed with a wildcard label (*.). The wildcard label must appear by itself as the first label.
     ///
     /// Hostname can be “precise” which is a domain name without the terminating dot of a network host (e.g. “foo.example.com”)
@@ -32,17 +37,17 @@ impl HostSpec {
     ///
     /// Note that as per RFC1035 and RFC1123, a label must consist of lower case alphanumeric characters or ‘-’,
     /// and must start and end with an alphanumeric character. No other punctuation is allowed.
-    fn parse(host: &str) -> Result<Self, HostSpecParseError> {
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
         let host_label_regex: Regex = Regex::new(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?$").unwrap();
 
-        if host.is_empty() {
+        if value.is_empty() {
             return Err(HostSpecParseError::EmptyStr);
         }
 
         let mut labels = vec![];
         let mut wildcard = false;
 
-        for label in host.split('.').rev() {
+        for label in value.split('.').rev() {
             if label.is_empty() {
                 return Err(HostSpecParseError::EmptyLabel);
             }
@@ -65,7 +70,9 @@ impl HostSpec {
 
         Ok(Self { labels, wildcard })
     }
+}
 
+impl HostSpec {
     pub(crate) fn matches(&self, hostname: &Hostname) -> bool {
         let wildcard_addition = if self.wildcard { 1 } else { 0 };
 
@@ -115,9 +122,10 @@ impl<'de> Visitor<'de> for HostVisitor {
     where
         E: serde::de::Error,
     {
-        HostSpec::parse(value).map_err(serde::de::Error::custom)
+        HostSpec::from_str(value).map_err(serde::de::Error::custom)
     }
 }
+
 impl<'de> Deserialize<'de> for HostSpec {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
@@ -162,7 +170,7 @@ pub(crate) struct Hostname {
 
 impl Hostname {
     pub(crate) fn parse(hostname: &str) -> Result<Self, HostnameParseError> {
-        let spec = HostSpec::parse(hostname)?;
+        let spec = HostSpec::from_str(hostname)?;
 
         if spec.wildcard {
             Err(HostnameParseError::UnexpectedWildcard)
@@ -180,7 +188,7 @@ mod tests {
 
     #[test]
     fn host_spec_empty_str() {
-        let result = HostSpec::parse("");
+        let result = HostSpec::from_str("");
 
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), HostSpecParseError::EmptyStr);
@@ -188,7 +196,7 @@ mod tests {
 
     #[test]
     fn host_spec_empty_label() {
-        let result = HostSpec::parse(".com");
+        let result = HostSpec::from_str(".com");
 
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), HostSpecParseError::EmptyLabel);
@@ -196,7 +204,7 @@ mod tests {
 
     #[test]
     fn host_spec_empty_label_in_the_middle() {
-        let result = HostSpec::parse("test..com");
+        let result = HostSpec::from_str("test..com");
 
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), HostSpecParseError::EmptyLabel);
@@ -204,7 +212,7 @@ mod tests {
 
     #[test]
     fn host_spec_invalid_label_unsopported_chars() {
-        let result = HostSpec::parse("invalid_domain.com");
+        let result = HostSpec::from_str("invalid_domain.com");
 
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), HostSpecParseError::InvalidLabel);
@@ -212,12 +220,12 @@ mod tests {
 
     #[test]
     fn host_spec_invalid_label_hypens() {
-        let result = HostSpec::parse("-invalid.com");
+        let result = HostSpec::from_str("-invalid.com");
 
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), HostSpecParseError::InvalidLabel);
 
-        let result = HostSpec::parse("invalid-.com");
+        let result = HostSpec::from_str("invalid-.com");
 
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), HostSpecParseError::InvalidLabel);
@@ -225,17 +233,17 @@ mod tests {
 
     #[test]
     fn valid_precise_hostname() {
-        let result = HostSpec::parse("test.com");
+        let result = HostSpec::from_str("test.com");
 
         assert!(result.is_ok());
         assert_eq!(result.unwrap().labels, vec!["com", "test"]);
 
-        let result = HostSpec::parse("subdomain.test.com");
+        let result = HostSpec::from_str("subdomain.test.com");
 
         assert!(result.is_ok());
         assert_eq!(result.unwrap().labels, vec!["com", "test", "subdomain"]);
 
-        let result = HostSpec::parse("many.subdomains.test.com");
+        let result = HostSpec::from_str("many.subdomains.test.com");
 
         assert!(result.is_ok());
         assert_eq!(
@@ -246,7 +254,7 @@ mod tests {
 
     #[test]
     fn invalid_wildcard_hostname_in_middle() {
-        let result = HostSpec::parse("test.*.com");
+        let result = HostSpec::from_str("test.*.com");
 
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), HostSpecParseError::InvalidWildcard);
@@ -254,7 +262,7 @@ mod tests {
 
     #[test]
     fn invalid_wildcard_hostname_multiple_wildcards() {
-        let result = HostSpec::parse("*.*.com");
+        let result = HostSpec::from_str("*.*.com");
 
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), HostSpecParseError::InvalidWildcard);
@@ -262,17 +270,17 @@ mod tests {
 
     #[test]
     fn valid_wildcard_hostname() {
-        let result = HostSpec::parse("*.test.com");
+        let result = HostSpec::from_str("*.test.com");
 
         assert!(result.is_ok());
         assert_eq!(result.unwrap().labels, vec!["com", "test"]);
 
-        let result = HostSpec::parse("*.subdomain.test.com");
+        let result = HostSpec::from_str("*.subdomain.test.com");
 
         assert!(result.is_ok());
         assert_eq!(result.unwrap().labels, vec!["com", "test", "subdomain"]);
 
-        let result = HostSpec::parse("*.many.subdomains.test.com");
+        let result = HostSpec::from_str("*.many.subdomains.test.com");
 
         assert!(result.is_ok());
         assert_eq!(

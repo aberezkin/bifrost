@@ -1,5 +1,6 @@
 use std::{iter::zip, str::FromStr};
 
+use itertools::Itertools;
 use regex::Regex;
 use serde::{de::Visitor, Deserialize, Deserializer, Serialize, Serializer};
 
@@ -22,7 +23,7 @@ impl<'de> Visitor<'de> for PrefixVisitor {
     where
         E: serde::de::Error,
     {
-        Ok(PathPrefix::parse(value))
+        PathPrefix::from_str(value).map_err(serde::de::Error::custom)
     }
 }
 
@@ -44,21 +45,42 @@ impl Serialize for PathPrefix {
     }
 }
 
-impl PathPrefix {
-    // TODO: stricter checking according to the gateway api spec
-    //
-    // PathPrefix and Exact paths must be syntactically valid:
-    //
-    // - Must begin with the / character
-    // - Must not contain consecutive / characters (e.g. /foo///, //).
-    //
-    // TODO: impl as FromStr
-    fn parse(string: &str) -> Self {
+use derive_more::Display;
+
+#[derive(Debug, Display)]
+pub(crate) enum PathPrefixParseError {
+    Empty,
+    NoSlashPrefix,
+    ConsecutiveSlashes,
+}
+
+impl FromStr for PathPrefix {
+    type Err = PathPrefixParseError;
+
+    /// PathPrefix and Exact paths must be syntactically valid:
+    ///
+    /// - Must begin with the / character
+    /// - Must not contain consecutive / characters (e.g. /foo///, //).
+    fn from_str(string: &str) -> Result<Self, Self::Err> {
         let mut segments: Vec<&str> = string.split('/').collect();
+
+        match segments.first() {
+            None => return Err(PathPrefixParseError::Empty),
+            Some(first_segment) if !first_segment.is_empty() => {
+                return Err(PathPrefixParseError::NoSlashPrefix);
+            }
+            _ => {}
+        }
+
+        for (first, second) in segments.iter().tuples() {
+            if (true, true) == (first.is_empty(), second.is_empty()) {
+                return Err(PathPrefixParseError::ConsecutiveSlashes);
+            }
+        }
 
         let last = segments.last();
 
-        match last {
+        Ok(match last {
             None => Self(vec![]),
             Some(segment) => {
                 let is_traling_slash = segment.is_empty();
@@ -69,9 +91,11 @@ impl PathPrefix {
 
                 Self(segments.into_iter().map(|s| s.to_string()).collect())
             }
-        }
+        })
     }
+}
 
+impl PathPrefix {
     /// Match a string aganst a prefix
     fn matches(&self, value_to_match: &str) -> bool {
         let segments: Vec<&str> = value_to_match.split('/').collect();
@@ -96,8 +120,26 @@ mod test {
     use super::*;
 
     #[test]
+    fn parse_fails_without_first_slash() {
+        let prefix = PathPrefix::from_str("abc");
+
+        assert!(prefix.is_err())
+    }
+
+    #[test]
+    fn parse_fails_on_consecutive_slashes() {
+        let prefix = PathPrefix::from_str("/abc//");
+
+        assert!(prefix.is_err());
+
+        let prefix = PathPrefix::from_str("//");
+
+        assert!(prefix.is_err());
+    }
+
+    #[test]
     fn prefix_matches() {
-        let prefix = PathPrefix::parse("/abc");
+        let prefix = PathPrefix::from_str("/abc").unwrap();
 
         assert!(prefix.matches("/abc"));
         assert!(prefix.matches("/abc/def"));
@@ -108,7 +150,7 @@ mod test {
 
     #[test]
     fn trailing_slash_in_definition_is_ignored() {
-        let prefix = PathPrefix::parse("/abc/");
+        let prefix = PathPrefix::from_str("/abc/").unwrap();
 
         assert!(prefix.matches("/abc"));
         assert!(prefix.matches("/abc/def"));
