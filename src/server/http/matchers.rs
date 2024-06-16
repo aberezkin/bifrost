@@ -138,7 +138,6 @@ impl PathMatch {
     pub(crate) fn matches(&self, value_to_match: &str) -> bool {
         match self {
             PathMatch::Exact { value } => value_to_match == value,
-            // TODO: proper prefix matching Prefix:/abc should match /abc/def but not /abcdef
             PathMatch::Prefix { value } => value.matches(value_to_match),
             PathMatch::Regex { value } => value.is_match(value_to_match),
         }
