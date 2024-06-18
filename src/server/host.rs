@@ -1,3 +1,4 @@
+use std::net::IpAddr;
 use std::str::FromStr;
 
 use regex::Regex;
@@ -20,6 +21,7 @@ pub(crate) enum HostSpecParseError {
     EmptyLabel,
     InvalidLabel,
     InvalidWildcard,
+    UnexpectedIp,
 }
 
 impl FromStr for HostSpec {
@@ -28,7 +30,7 @@ impl FromStr for HostSpec {
     /// Hostname is the fully qualified domain name of a network host.
     /// This matches the RFC 1123 definition of a hostname with 2 notable exceptions:
     ///
-    /// 1. IPs are not allowed. TODO: Implement this rule
+    /// 1. IPs are not allowed.
     ///
     /// 2. A hostname may be prefixed with a wildcard label (*.). The wildcard label must appear by itself as the first label.
     ///
@@ -38,6 +40,12 @@ impl FromStr for HostSpec {
     /// Note that as per RFC1035 and RFC1123, a label must consist of lower case alphanumeric characters or ‘-’,
     /// and must start and end with an alphanumeric character. No other punctuation is allowed.
     fn from_str(value: &str) -> Result<Self, Self::Err> {
+        let is_ip = IpAddr::from_str(value).is_ok();
+
+        if is_ip {
+            return Err(HostSpecParseError::UnexpectedIp);
+        }
+
         let host_label_regex: Regex = Regex::new(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?$").unwrap();
 
         if value.is_empty() {
@@ -86,8 +94,8 @@ impl HostSpec {
             }
         }
 
-        if hostname.labels.len() > self.labels.len() {
-            return self.wildcard;
+        if self.wildcard {
+            return hostname.labels.len() > self.labels.len();
         }
 
         true
@@ -150,6 +158,7 @@ pub(crate) enum HostnameParseError {
     EmptyLabel,
     InvalidLabel,
     UnexpectedWildcard,
+    UnexpectedIp,
 }
 
 impl From<HostSpecParseError> for HostnameParseError {
@@ -159,6 +168,7 @@ impl From<HostSpecParseError> for HostnameParseError {
             HostSpecParseError::EmptyLabel => HostnameParseError::EmptyLabel,
             HostSpecParseError::InvalidLabel => HostnameParseError::InvalidLabel,
             HostSpecParseError::InvalidWildcard => HostnameParseError::UnexpectedWildcard,
+            HostSpecParseError::UnexpectedIp => HostnameParseError::UnexpectedIp,
         }
     }
 }
@@ -234,6 +244,22 @@ mod tests {
     }
 
     #[test]
+    fn host_spec_unexpected_ipv4() {
+        let result = HostSpec::from_str("12.12.12.12");
+
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), HostSpecParseError::UnexpectedIp);
+    }
+
+    #[test]
+    fn host_spec_unexpected_ipv6() {
+        let result = HostSpec::from_str("2001:db8::8a2e:370:7334");
+
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), HostSpecParseError::UnexpectedIp);
+    }
+
+    #[test]
     fn valid_precise_hostname() {
         let result = HostSpec::from_str("test.com");
 
@@ -302,5 +328,53 @@ mod tests {
 
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), HostnameParseError::UnexpectedWildcard);
+    }
+
+    #[test]
+    fn host_spec_match_exact() {
+        let host_spec = HostSpec::from_str("test.com").unwrap();
+        let hostname = Hostname::from_str("test.com").unwrap();
+
+        assert!(host_spec.matches(&hostname))
+    }
+
+    #[test]
+    fn host_spec_match_subdomains() {
+        let host_spec = HostSpec::from_str("sub.test.com").unwrap();
+        let hostname = Hostname::from_str("sub.test.com").unwrap();
+
+        assert!(host_spec.matches(&hostname))
+    }
+
+    #[test]
+    fn host_spec_match_wildcard() {
+        let host_spec = HostSpec::from_str("*.test.com").unwrap();
+        let hostname = Hostname::from_str("other-sub.test.com").unwrap();
+
+        assert!(host_spec.matches(&hostname))
+    }
+
+    #[test]
+    fn host_spec_missmatch() {
+        let host_spec = HostSpec::from_str("test.com").unwrap();
+        let hostname = Hostname::from_str("not-test.com").unwrap();
+
+        assert!(!host_spec.matches(&hostname))
+    }
+
+    #[test]
+    fn host_spec_missmatch_subdomain() {
+        let host_spec = HostSpec::from_str("sub.test.com").unwrap();
+        let hostname = Hostname::from_str("not-sub.test.com").unwrap();
+
+        assert!(!host_spec.matches(&hostname))
+    }
+
+    #[test]
+    fn host_spec_missmatch_wildcard() {
+        let host_spec = HostSpec::from_str("*.test.com").unwrap();
+        let hostname = Hostname::from_str("sub2.sub1.test.com").unwrap();
+
+        assert!(!host_spec.matches(&hostname))
     }
 }

@@ -88,9 +88,6 @@ impl HttpServer {
         let host_str = req.headers().get("host").unwrap().to_str().unwrap();
         let host = Hostname::from_str(host_str).unwrap();
 
-        // TODO: There might be a better way to do this.
-        // a hashmap cache can be an option
-        // but should be invalidated in case of config update
         let route = routes.iter().find(|route| {
             route
                 .hostnames

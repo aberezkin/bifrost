@@ -12,6 +12,7 @@ use super::TcpFields;
 // Also it's possible to make it configurable.
 const DEFAULT_BUFFER_SIZE: usize = 4 * 1024; // 2KB
 
+// TODO: TLS and TLS routing https://gateway-api.sigs.k8s.io/reference/spec/
 pub(crate) struct TcpServer {
     pub(crate) config: TcpFields,
     pub(crate) service: TcpService,
