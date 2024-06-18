@@ -15,6 +15,7 @@ use server::{
 };
 use service::Service;
 use std::{collections::HashMap, fs};
+use tokio::sync::Mutex;
 
 #[tokio::main]
 async fn main() {
@@ -82,7 +83,7 @@ async fn main() {
         let services_map = http
             .services
             .into_iter()
-            .map(|(name, backend)| (name, Arc::new(backend)))
+            .map(|(name, backend)| (name, Arc::new(Mutex::new(backend))))
             .collect::<HashMap<_, _>>();
 
         let mut route_map = HashMap::<String, Vec<HttpRoute>>::new();

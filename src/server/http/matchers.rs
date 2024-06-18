@@ -164,7 +164,11 @@ mod test {
 #[serde(tag = "type")]
 pub(crate) enum PathMatch {
     Exact {
-        /// TODO: leading slash validation
+        /// TODO: leading slash validation (there should be one)
+        /// PathPrefix and Exact paths must be syntactically valid:
+        ///
+        /// Must begin with the / character
+        /// Must not contain consecutive / characters (e.g. /foo///, //).
         value: String,
     },
     Prefix {

@@ -8,26 +8,68 @@ use hyper::{body::Incoming, Request, Response};
 use hyper_util::rt::TokioIo;
 use std::convert::Infallible;
 
+#[derive(Deserialize, Serialize, Debug, Default)]
+#[serde(rename_all = "kebab-case")]
+pub(crate) enum LoadBalancingAlgorithm {
+    #[default]
+    RoundRobin,
+    Random,
+}
+
 #[derive(Deserialize, Serialize, Debug)]
-pub(crate) struct HttpService {
+struct LoadBalancer {
+    #[serde(default)]
+    current_connection_index: usize,
+    #[serde(default, rename = "load_balancing_algorithm")]
+    algo: LoadBalancingAlgorithm,
     backends: Vec<BackendDefinition>,
 }
 
-impl HttpService {
-    pub(super) async fn get_connection(&self) -> std::io::Result<TcpStream> {
+#[derive(Debug)]
+pub(crate) enum ConnectionError {
+    BackendNotFound,
+    IoError(std::io::Error),
+}
+
+impl LoadBalancer {
+    async fn get_connection(&mut self) -> Result<TcpStream, ConnectionError> {
         // TODO: load balancing
         // e.g. give connections to different backends according
         // to specified load balancing algo
-        self.backends.first().unwrap().get_connection().await
-    }
+        let backend = self
+            .backends
+            .get(self.current_connection_index)
+            .ok_or(ConnectionError::BackendNotFound)?;
 
+        println!("{}", backend.port);
+
+        let connection = backend
+            .get_connection()
+            .await
+            .map_err(ConnectionError::IoError);
+
+        self.current_connection_index = (self.current_connection_index + 1) % self.backends.len();
+
+        connection
+    }
+}
+
+#[derive(Deserialize, Serialize, Debug)]
+#[serde(rename_all = "kebab-case")]
+pub(crate) struct HttpService {
+    #[serde(flatten)]
+    load_balancer: LoadBalancer,
+}
+
+impl HttpService {
     pub(super) async fn send_request(
-        &self,
+        &mut self,
         req: Request<Incoming>,
     ) -> Result<Response<BoxBody<Bytes, hyper::Error>>, Infallible> {
         use hyper::client::conn::http1;
 
-        let stream = self.get_connection().await.unwrap();
+        // FIX: unwrap
+        let stream = self.load_balancer.get_connection().await.unwrap();
 
         let io = TokioIo::new(stream);
 

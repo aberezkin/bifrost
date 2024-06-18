@@ -2,6 +2,7 @@ use bytes::Bytes;
 use http_body_util::combinators::BoxBody;
 use hyper::{body::Incoming, Request, Response};
 use std::{convert::Infallible, sync::Arc};
+use tokio::sync::Mutex;
 
 use crate::server::host::HostSpec;
 
@@ -10,7 +11,7 @@ use super::{matchers::Matcher, service::HttpService};
 #[derive(Debug)]
 pub(crate) struct HttpRule {
     pub(crate) matchers: Vec<Matcher>,
-    backend: Arc<HttpService>,
+    backend: Arc<Mutex<HttpService>>,
 }
 
 impl HttpRule {
@@ -26,14 +27,14 @@ impl HttpRule {
         &self,
         req: Request<Incoming>,
     ) -> Result<Response<BoxBody<Bytes, hyper::Error>>, Infallible> {
-        self.backend.send_request(req).await
+        self.backend.lock().await.send_request(req).await
     }
 }
 
 // This route is def on steroids
 // Thanks networking-sig
 impl HttpRule {
-    pub(crate) fn new(matchers: Vec<Matcher>, backend: Arc<HttpService>) -> Self {
+    pub(crate) fn new(matchers: Vec<Matcher>, backend: Arc<Mutex<HttpService>>) -> Self {
         Self { matchers, backend }
     }
 }
