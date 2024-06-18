@@ -164,6 +164,7 @@ mod test {
 #[serde(tag = "type")]
 pub(crate) enum PathMatch {
     Exact {
+        /// TODO: leading slash validation
         value: String,
     },
     Prefix {
@@ -175,7 +176,7 @@ pub(crate) enum PathMatch {
     },
 }
 
-// TODO: tests and matchers module
+// TODO: tests
 impl PathMatch {
     pub(crate) fn matches(&self, value_to_match: &str) -> bool {
         match self {
@@ -183,6 +184,70 @@ impl PathMatch {
             PathMatch::Prefix { value } => value.matches(value_to_match),
             PathMatch::Regex { value } => value.is_match(value_to_match),
         }
+    }
+}
+
+#[cfg(test)]
+mod test_matches {
+    use super::*;
+
+    #[test]
+    fn exact_matcher() {
+        let matcher = PathMatch::Exact {
+            value: "/exact".to_owned(),
+        };
+
+        assert!(matcher.matches("/exact"));
+        assert!(!matcher.matches("/exactly"));
+        assert!(!matcher.matches("/"));
+    }
+
+    #[test]
+    fn prefix_matcher() {
+        let matcher = PathMatch::Prefix {
+            value: PathPrefix::from_str("/prefix").unwrap(),
+        };
+
+        assert!(matcher.matches("/prefix"));
+        assert!(matcher.matches("/prefix/"));
+        assert!(matcher.matches("/prefix/one"));
+        assert!(matcher.matches("/prefix/one/two"));
+        assert!(matcher.matches("/prefix/one/three"));
+        assert!(!matcher.matches("/not-prefix/one/three"));
+    }
+
+    #[test]
+    fn regex_matcher() {
+        let matcher = PathMatch::Regex {
+            value: Regex::from_str("/prefix/[0-9]+$").unwrap(),
+        };
+
+        assert!(!matcher.matches("/prefix"));
+        assert!(!matcher.matches("/prefix"));
+
+        assert!(matcher.matches("/prefix/1"));
+        assert!(matcher.matches("/prefix/123"));
+        assert!(matcher.matches("/prefix/123213809124091289490"));
+
+        assert!(!matcher.matches("prefix/1"));
+        assert!(!matcher.matches("/prefix/a"));
+        assert!(!matcher.matches("/prefix/123a"));
+        assert!(!matcher.matches("/prefix/123foo"));
+        assert!(!matcher.matches("/prefix/123/foo"));
+
+        let matcher = PathMatch::Regex {
+            value: Regex::from_str("/prefix/[0-9A-Za-z-_]+/foo$").unwrap(),
+        };
+
+        assert!(matcher.matches("/prefix/123foobarbaz/foo"));
+        assert!(matcher.matches("/prefix/123-foo-bar_baz/foo"));
+        assert!(!matcher.matches("/prefix/123-foo-bar_baz/foobar"));
+
+        // NOTE: I'm not sure if we should support this as it might be
+        // not expected behavior from consumers and kind of makes them add
+        // ^ prefix before each and every regex path that they use.
+        // This is going to have to be consulted with consumers.
+        assert!(matcher.matches("another/prefix/123-foo-bar_baz/foo"));
     }
 }
 

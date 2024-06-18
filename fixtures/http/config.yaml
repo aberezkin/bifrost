@@ -3,6 +3,9 @@ http:
     - name: http-1
       port: 8080
       version: 1
+    - name: http-2
+      port: 8081
+      version: 1
   services:
     http-1-service:
       backends:

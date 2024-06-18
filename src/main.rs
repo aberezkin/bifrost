@@ -119,11 +119,7 @@ async fn main() {
         servers
             .into_iter()
             .map(|config| {
-                let routes = route_map.remove(&config.name).unwrap();
-
-                if routes.is_empty() {
-                    panic!("No routes found for server {}", config.name);
-                }
+                let routes = route_map.remove(&config.name).unwrap_or_default();
 
                 HttpServer::new(config, routes)
             })

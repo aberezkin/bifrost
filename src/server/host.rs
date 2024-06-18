@@ -168,9 +168,11 @@ pub(crate) struct Hostname {
     labels: Vec<String>,
 }
 
-impl Hostname {
-    pub(crate) fn parse(hostname: &str) -> Result<Self, HostnameParseError> {
-        let spec = HostSpec::from_str(hostname)?;
+impl FromStr for Hostname {
+    type Err = HostnameParseError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let spec = HostSpec::from_str(s)?;
 
         if spec.wildcard {
             Err(HostnameParseError::UnexpectedWildcard)
@@ -291,12 +293,12 @@ mod tests {
 
     #[test]
     fn unexpected_wildcard_hostname() {
-        let result = Hostname::parse("*.com");
+        let result = Hostname::from_str("*.com");
 
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), HostnameParseError::UnexpectedWildcard);
 
-        let result = Hostname::parse("*.*.com");
+        let result = Hostname::from_str("*.*.com");
 
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), HostnameParseError::UnexpectedWildcard);

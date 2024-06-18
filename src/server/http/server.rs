@@ -5,7 +5,7 @@ use http_body_util::{combinators::BoxBody, BodyExt, Full};
 use hyper::{body::Incoming, server::conn::http1, service::service_fn, Request, Response};
 use hyper_util::rt::TokioIo;
 use serde::{Deserialize, Serialize};
-use std::{convert::Infallible, net::SocketAddr, sync::Arc};
+use std::{convert::Infallible, net::SocketAddr, str::FromStr, sync::Arc};
 use tokio::net::TcpListener;
 
 use super::route::HttpRoute;
@@ -68,7 +68,7 @@ impl HttpServer {
         // find the service they match. Finding the service should be the FIRST step as if
         // there's no service found, any work done with the request is for nothing.
         //
-        // NOTE: After we foudn the service, we might need to apply so called "filters" to the request.
+        // NOTE: After we found the service, we might need to apply so called "filters" to the request.
         // https://gateway-api.sigs.k8s.io/reference/spec/#gateway.networking.k8s.io%2fv1.HTTPRouteFilter
         // HttpRouteFilter are modifying the request before it's sent to the service
         // These can modify request headers and response headers, mirror a request to another
@@ -85,7 +85,8 @@ impl HttpServer {
         println!("{}", req.uri().path());
         println!("{}", req.method());
 
-        let host = Hostname::parse(req.headers().get("host").unwrap().to_str().unwrap()).unwrap();
+        let host_str = req.headers().get("host").unwrap().to_str().unwrap();
+        let host = Hostname::from_str(host_str).unwrap();
 
         // TODO: There might be a better way to do this.
         // a hashmap cache can be an option
