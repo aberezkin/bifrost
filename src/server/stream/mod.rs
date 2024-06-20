@@ -1,3 +1,4 @@
+pub(crate) mod cluster;
 mod tcp;
 mod udp;
 

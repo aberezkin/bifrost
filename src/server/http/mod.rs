@@ -1,3 +1,4 @@
+pub(crate) mod cluster;
 pub(crate) mod matchers;
 pub(crate) mod route;
 pub(crate) mod server;

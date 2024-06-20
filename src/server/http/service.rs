@@ -1,6 +1,7 @@
 use bytes::Bytes;
 use http_body_util::{combinators::BoxBody, BodyExt};
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
 use tokio::net::TcpStream;
 
 use crate::service::config::BackendDefinition;
@@ -25,9 +26,11 @@ struct LoadBalancer {
     backends: Vec<BackendDefinition>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Error)]
 pub(crate) enum ConnectionError {
+    #[error("backend not found (that is usually our fault and should never happen)")]
     BackendNotFound,
+    #[error("IO error occured: {0}")]
     IoError(std::io::Error),
 }
 

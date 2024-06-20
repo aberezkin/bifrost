@@ -5,7 +5,7 @@ use http_body_util::{combinators::BoxBody, BodyExt, Full};
 use hyper::{body::Incoming, server::conn::http1, service::service_fn, Request, Response};
 use hyper_util::rt::TokioIo;
 use serde::{Deserialize, Serialize};
-use std::{convert::Infallible, net::SocketAddr, str::FromStr, sync::Arc};
+use std::{convert::Infallible, io, net::SocketAddr, str::FromStr, sync::Arc};
 use tokio::net::TcpListener;
 
 use super::route::HttpRoute;
@@ -29,7 +29,7 @@ impl HttpServer {
         }
     }
 
-    pub(crate) async fn run(self) -> Result<(), Box<dyn std::error::Error>> {
+    pub(crate) async fn run(self) -> Result<(), io::Error> {
         let addr: SocketAddr = ([0, 0, 0, 0], self.port).into();
 
         let listener = TcpListener::bind(addr).await?;
