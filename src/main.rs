@@ -1,6 +1,7 @@
 // TODO: break this file down
 pub(crate) mod cli;
 
+mod control;
 mod protocol;
 mod server;
 mod service;
@@ -11,7 +12,7 @@ use futures::{future::OptionFuture, join};
 use server::{http::cluster::HttpServerCluster, stream::cluster::StreamServerCluster};
 
 #[tokio::main]
-async fn main() {
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt::init();
 
     let args = Args::parse();
@@ -35,5 +36,9 @@ async fn main() {
         .map(HttpServerCluster::run_all)
         .into();
 
-    join!(stream_cluster, http_cluster);
+    let control_server = control::run_grpc();
+
+    join!(stream_cluster, http_cluster, control_server);
+
+    Ok(())
 }

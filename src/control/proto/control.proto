@@ -1,0 +1,13 @@
+syntax = "proto3";
+package control;
+
+message GetConfigRequest { }
+
+message GetConfigReply {
+    string contents = 1;
+}
+
+service Control {
+    rpc GetConfig(GetConfigRequest) returns (GetConfigReply);
+}
+
