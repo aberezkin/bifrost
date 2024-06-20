@@ -180,7 +180,6 @@ pub(crate) enum PathMatch {
     },
 }
 
-// TODO: tests
 impl PathMatch {
     pub(crate) fn matches(&self, value_to_match: &str) -> bool {
         match self {
