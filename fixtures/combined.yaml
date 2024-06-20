@@ -1,0 +1,46 @@
+http:
+  servers:
+    - name: http-1
+      port: 8080
+      version: 1
+  services:
+    http-1-service:
+      backends:
+      - port: 3000
+        ip: 127.0.0.1
+      - port: 3001
+        ip: 127.0.0.1
+  routes:
+  - name: http-1-route
+    server: http-1
+    hostnames:
+      - "sussy.com"
+      - "*.sussy.com"
+    rules:
+    - backend: http-1-service
+      matches:
+      - path:
+          type: Exact
+          value: /exact
+stream:
+  servers:
+    - name: tcp-server
+      port: 8082
+      protocol: tcp
+      service: tcp-service
+    - name: udp-server
+      port: 8081
+      protocol: udp
+      service: udp-service
+      biderectional_connection_ttl: 10s
+  services:
+    tcp-service:
+      protocol: tcp
+      backends:
+      - port: 8080
+        ip: 127.0.0.1
+    udp-service:
+      protocol: udp
+      backends:
+      - port: 8080
+        ip: 127.0.0.1

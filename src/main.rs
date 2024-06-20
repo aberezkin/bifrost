@@ -7,7 +7,7 @@ mod service;
 
 use clap::Parser;
 use cli::Args;
-use futures::join;
+use futures::{future::OptionFuture, join};
 use server::{http::cluster::HttpServerCluster, stream::cluster::StreamServerCluster};
 
 #[tokio::main]
@@ -26,22 +26,14 @@ async fn main() {
 
     let server::Config { stream, http } = config;
 
-    let stream_cluster = stream.map(StreamServerCluster::from_config);
-    let http_cluster = http.map(HttpServerCluster::from_config);
+    let stream_cluster: OptionFuture<_> = stream
+        .map(StreamServerCluster::from_config)
+        .map(StreamServerCluster::run_all)
+        .into();
+    let http_cluster: OptionFuture<_> = http
+        .map(HttpServerCluster::from_config)
+        .map(HttpServerCluster::run_all)
+        .into();
 
-    // Maybe a way to improve this piece? buth clusters are Option
-    match (http_cluster, stream_cluster) {
-        (Some(http), Some(stream)) => {
-            join!(http.run_all(), stream.run_all());
-        }
-        (Some(http), None) => {
-            http.run_all().await;
-        }
-        (None, Some(stream)) => {
-            stream.run_all().await;
-        }
-        _ => {
-            println!("No servers configured, shutting down");
-        }
-    }
+    join!(stream_cluster, http_cluster);
 }
